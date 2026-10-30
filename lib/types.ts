@@ -6,6 +6,11 @@ export interface Endpoint {
   url: string | null;
   hide_url: boolean;
   created_at: string;
+  /** Daily window (Europe/Zurich, "HH:MM:SS") in which the checker skips this endpoint — null when always checked. */
+  quiet_start: string | null;
+  quiet_end: string | null;
+  /** Computed by the database at query time. */
+  in_quiet_hours: boolean;
 }
 
 export interface Check {

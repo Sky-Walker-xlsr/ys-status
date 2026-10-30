@@ -12,7 +12,15 @@
  * Check semantics follow gatus: GET, follow redirects, success = HTTP 2xx
  * within the timeout, status changes only after FAILURE_THRESHOLD /
  * SUCCESS_THRESHOLD consecutive results.
+ *
+ * The checks themselves run inside a Durable Object pinned to Western Europe.
+ * Cron triggers execute in whatever colo Cloudflare picks (often SIN/US), and
+ * the targets' Workers then run there too — xavistylist.ch's Next.js worker
+ * got killed with `exceededCpu` (HTTP 503) for hours at a time on cold,
+ * far-away isolates while real visitors from Switzerland were fine.
  */
+
+import { DurableObject } from "cloudflare:workers";
 
 interface Env {
   SUPABASE_URL: string;
@@ -22,6 +30,7 @@ interface Env {
    * Bot Fight Mode / Managed Challenge for the checker only (see README).
    */
   HEALTH_CHECK_SECRET?: string;
+  CHECKER: DurableObjectNamespace<EuChecker>;
 }
 
 interface EndpointRow {
@@ -54,7 +63,17 @@ export default {
   // cron triggers per *account*, so rollups piggyback on the check run instead
   // of having their own schedules.
   async scheduled(controller: ScheduledController, env: Env) {
-    const at = new Date(controller.scheduledTime);
+    // The location hint only applies when the object is first created — keep
+    // the name stable so it stays in Europe.
+    const stub = env.CHECKER.get(env.CHECKER.idFromName("checker-weur"), { locationHint: "weur" });
+    await stub.run(controller.scheduledTime);
+  },
+} satisfies ExportedHandler<Env>;
+
+export class EuChecker extends DurableObject<Env> {
+  async run(scheduledTime: number) {
+    const env = this.env;
+    const at = new Date(scheduledTime);
     const tasks = [runChecks(env)];
     if (at.getUTCMinutes() === 0) tasks.push(rpc(env, "rollup_hourly", {}));
     if (at.getUTCHours() === 0 && at.getUTCMinutes() === 5) tasks.push(rpc(env, "rollup_daily", {}));
@@ -63,11 +82,13 @@ export default {
     const failures = (await Promise.allSettled(tasks)).filter((r) => r.status === "rejected");
     for (const f of failures) console.error(f.reason instanceof Error ? f.reason.message : String(f.reason));
     if (failures.length > 0) throw new Error(`Scheduled run failed (${failures.length} task(s), see logs)`);
-  },
-} satisfies ExportedHandler<Env>;
+  }
+}
 
 async function runChecks(env: Env) {
-  const res = await fetch(`${env.SUPABASE_URL}/rest/v1/endpoints?select=id,url`, { headers: supabaseHeaders(env) });
+  // `endpoints_due` leaves out endpoints inside their nightly quiet window
+  // (homelab switched off) — see supabase/005_quiet_hours.sql.
+  const res = await fetch(`${env.SUPABASE_URL}/rest/v1/endpoints_due?select=id,url`, { headers: supabaseHeaders(env) });
   if (!res.ok) throw new Error(`Loading endpoints failed: ${res.status} ${await res.text()}`);
   const endpoints = (await res.json()) as EndpointRow[];
   if (endpoints.length === 0) return;

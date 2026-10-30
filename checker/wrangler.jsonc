@@ -11,7 +11,12 @@
     // SUPABASE_SERVICE_ROLE_KEY → wrangler secret put SUPABASE_SERVICE_ROLE_KEY -c checker/wrangler.jsonc
     // HEALTH_CHECK_SECRET (optional) → wrangler secret put HEALTH_CHECK_SECRET -c checker/wrangler.jsonc
   },
-  "triggers": {
+  // Runs the checks from Western Europe — see EuChecker in index.ts.
+  "durable_objects": {
+    "bindings": [{ "name": "CHECKER", "class_name": "EuChecker" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["EuChecker"] }],
+    "triggers": {
     "crons": ["*/5 * * * *"]
   },
   "observability": { "enabled": true }

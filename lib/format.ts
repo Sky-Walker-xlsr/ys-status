@@ -52,6 +52,17 @@ export function formatTimeShort(isoDate: string): string {
   });
 }
 
+/**
+ * Why a failed check failed. The checker stores `status_code: null` when no
+ * HTTP response came back at all — a timeout if it ran the full 10s budget,
+ * otherwise a connection-level error (DNS, TLS, refused).
+ */
+export function describeFailure(check: { status_code: number | null; response_time_ms: number | null }): string {
+  if (check.status_code !== null) return `HTTP ${check.status_code}`;
+  if (check.response_time_ms !== null && check.response_time_ms >= 10_000) return "Timeout";
+  return "Connection error";
+}
+
 export function formatMs(ms: number | null | undefined): string {
   if (ms === null || ms === undefined) return "—";
   return `${Math.round(ms)}ms`;
@@ -60,6 +71,12 @@ export function formatMs(ms: number | null | undefined): string {
 export function formatUptime(pct: number | null | undefined): string {
   if (pct === null || pct === undefined) return "—";
   return `${pct.toFixed(2)}%`;
+}
+
+/** "00:00–06:10" from the database's "HH:MM:SS" quiet window bounds. */
+export function formatQuietWindow(start: string | null, end: string | null): string {
+  if (!start || !end) return "—";
+  return `${start.slice(0, 5)}–${end.slice(0, 5)}`;
 }
 
 export function hostOf(url: string): string {

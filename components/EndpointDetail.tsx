@@ -9,6 +9,7 @@ import ChecksBarChart from "./ChecksBarChart";
 import ResponseTimeTrendChart, { type TrendPoint } from "./ResponseTimeTrendChart";
 import EventsList from "./EventsList";
 import Pagination from "./Pagination";
+import FailedChecksList from "./FailedChecksList";
 import {
   fetchChecksPage,
   fetchEndpoint,
@@ -20,7 +21,7 @@ import {
   type TrendPeriod,
 } from "@/lib/queries/detail";
 import type { Check, Endpoint, PeriodTotals, StatusEvent } from "@/lib/types";
-import { hostOf, formatMs, formatRelativeTime, formatUptime } from "@/lib/format";
+import { hostOf, formatMs, formatQuietWindow, formatRelativeTime, formatUptime } from "@/lib/format";
 
 const PERIODS: Period[] = ["1h", "24h", "7d", "30d"];
 const PERIOD_LABELS: Record<Period, string> = {
@@ -125,6 +126,7 @@ export default function EndpointDetail({ endpointId }: EndpointDetailProps) {
 
   const totalPages = Math.max(1, Math.ceil(checksTotalCount / CHECKS_PAGE_SIZE));
   const healthy = latestCheck?.success ?? false;
+  const paused = endpoint?.in_quiet_hours ?? false;
 
   const latencyRange = useMemo(() => {
     const times = checksPage.filter((c) => c.success && c.response_time_ms !== null).map((c) => c.response_time_ms as number);
@@ -164,14 +166,24 @@ export default function EndpointDetail({ endpointId }: EndpointDetailProps) {
               )}
             </p>
           </div>
-          <StatusBadge healthy={healthy} />
+          <StatusBadge healthy={healthy} paused={paused} />
         </div>
+
+        {paused && (
+          <div
+            className="rounded-[var(--radius-main)] px-4 py-3 text-sm"
+            style={{ background: "var(--color-card)", border: "1px solid var(--color-border)", color: "var(--color-text-secondary)" }}
+          >
+            Homelab is switched off daily {formatQuietWindow(endpoint?.quiet_start ?? null, endpoint?.quiet_end ?? null)}{" "}
+            (Swiss time) — checks are paused until then. The data below is from the last check before the pause.
+          </div>
+        )}
 
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
           <StatCard
             label="Current Status"
-            value={healthy ? "Operational" : "Down"}
-            valueColor={healthy ? "var(--color-success)" : "var(--color-danger-text)"}
+            value={paused ? "Paused" : healthy ? "Operational" : "Down"}
+            valueColor={paused ? "var(--color-text-secondary)" : healthy ? "var(--color-success)" : "var(--color-danger-text)"}
           />
           <StatCard label="Avg Response Time" value={formatMs(periodTotals["24h"]?.avg_response_time_ms)} />
           <StatCard
@@ -200,9 +212,11 @@ export default function EndpointDetail({ endpointId }: EndpointDetailProps) {
             className="rounded-[var(--radius-main)] p-4"
             style={{ background: "var(--color-card)", border: "1px solid var(--color-border)" }}
           >
-            <ChecksBarChart checks={checksPage} maxBars={CHECKS_PAGE_SIZE} barHeight={44} />
+            {/* No cap here — the page already holds exactly CHECKS_PAGE_SIZE checks, unchecked gaps come on top. */}
+            <ChecksBarChart checks={checksPage} minBars={CHECKS_PAGE_SIZE} untilNow={page === 1} barHeight={44} />
           </div>
           <Pagination page={page} totalPages={totalPages} onPageChange={setPage} />
+          <FailedChecksList checks={checksPage} />
         </section>
 
         <section className="flex flex-col gap-2">
@@ -264,7 +278,11 @@ export default function EndpointDetail({ endpointId }: EndpointDetailProps) {
           <h2 className="text-sm font-medium" style={{ color: "var(--color-text)" }}>
             Current Health
           </h2>
-          <PillBadge label="Status" value={healthy ? "up" : "down"} tone={healthy ? "success" : "danger"} />
+          <PillBadge
+            label="Status"
+            value={paused ? "paused" : healthy ? "up" : "down"}
+            tone={paused ? "neutral" : healthy ? "success" : "danger"}
+          />
         </section>
 
         <section className="flex flex-col gap-2">

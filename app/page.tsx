@@ -72,8 +72,9 @@ export default function OverviewPage() {
       list.sort((a, b) => a.name.localeCompare(b.name));
     } else {
       list.sort((a, b) => {
-        const aHealthy = isHealthy(data.checksByEndpoint[a.id]);
-        const bHealthy = isHealthy(data.checksByEndpoint[b.id]);
+        // Paused endpoints aren't failing — keep them out of the "unhealthy first" block.
+        const aHealthy = a.in_quiet_hours || isHealthy(data.checksByEndpoint[a.id]);
+        const bHealthy = b.in_quiet_hours || isHealthy(data.checksByEndpoint[b.id]);
         if (aHealthy === bHealthy) return a.name.localeCompare(b.name);
         return aHealthy ? 1 : -1;
       });

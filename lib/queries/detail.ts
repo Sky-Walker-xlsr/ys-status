@@ -156,27 +156,60 @@ export async function fetchPeriodTotals(endpointId: string, period: Period): Pro
   return combineTotals(days.map((d) => d.totals));
 }
 
+const HOUR_MS = 60 * 60 * 1000;
+const DAY_MS = 24 * HOUR_MS;
+
+const hourLabel = (ts: number) => new Date(ts).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+const dayHourLabel = (ts: number) =>
+  new Date(ts).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit" });
+const dayLabel = (ts: number) => new Date(ts).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+
+/**
+ * Insert `tracked: false` points for buckets with no data at all between two
+ * existing ones (quiet hours, missed runs), so the chart can grey them out
+ * instead of drawing a line straight across.
+ */
+function fillUntrackedGaps(points: TrendPoint[], stepMs: number, label: (ts: number) => string): TrendPoint[] {
+  const result: TrendPoint[] = [];
+  for (const point of points) {
+    const prev = result[result.length - 1];
+    if (prev) {
+      // Half a step of slack absorbs DST shifts in local-hour buckets.
+      for (let ts = prev.timestamp + stepMs; ts < point.timestamp - stepMs / 2; ts += stepMs) {
+        result.push({ label: label(ts), timestamp: ts, responseTimeMs: null, tracked: false });
+      }
+    }
+    result.push(point);
+  }
+  return result;
+}
+
 function bucketChecksByHour(checks: ChecksRow[]): TrendPoint[] {
   const buckets = new Map<number, { sum: number; count: number; timestamp: number }>();
 
+  // Every check opens its bucket — an hour where all checks failed is
+  // tracked (just without a response time), not a gap.
   for (const check of checks) {
-    if (!check.success || check.response_time_ms === null) continue;
     const bucketDate = new Date(check.checked_at);
     bucketDate.setMinutes(0, 0, 0);
     const key = bucketDate.getTime();
     const bucket = buckets.get(key) ?? { sum: 0, count: 0, timestamp: key };
-    bucket.sum += check.response_time_ms;
-    bucket.count += 1;
+    if (check.success && check.response_time_ms !== null) {
+      bucket.sum += check.response_time_ms;
+      bucket.count += 1;
+    }
     buckets.set(key, bucket);
   }
 
-  return Array.from(buckets.values())
+  const points = Array.from(buckets.values())
     .sort((a, b) => a.timestamp - b.timestamp)
     .map((bucket) => ({
-      label: new Date(bucket.timestamp).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" }),
+      label: hourLabel(bucket.timestamp),
       timestamp: bucket.timestamp,
-      responseTimeMs: Math.round(bucket.sum / bucket.count),
+      responseTimeMs: bucket.count > 0 ? Math.round(bucket.sum / bucket.count) : null,
+      tracked: true,
     }));
+  return fillUntrackedGaps(points, HOUR_MS, hourLabel);
 }
 
 export async function fetchTrendData(endpointId: string, period: TrendPeriod): Promise<TrendPoint[]> {
@@ -205,18 +238,22 @@ export async function fetchTrendData(endpointId: string, period: TrendPeriod): P
       .order("hour_start", { ascending: true })
       .returns<Pick<HourlyStatRow, "hour_start" | "avg_response_time_ms">[]>();
     if (error) throw error;
-    return (data ?? []).map((row) => ({
-      label: new Date(row.hour_start).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit" }),
+    const points = (data ?? []).map((row) => ({
+      label: dayHourLabel(new Date(row.hour_start).getTime()),
       timestamp: new Date(row.hour_start).getTime(),
       responseTimeMs: row.avg_response_time_ms,
+      tracked: true,
     }));
+    return fillUntrackedGaps(points, HOUR_MS, dayHourLabel);
   }
 
   const sinceDay = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
   const days = await fetchDailyTotalsWithFallback(endpointId, sinceDay);
-  return days.map(({ day, totals }) => ({
-    label: new Date(`${day}T00:00:00.000Z`).toLocaleDateString(undefined, { month: "short", day: "numeric" }),
+  const points = days.map(({ day, totals }) => ({
+    label: dayLabel(new Date(`${day}T00:00:00.000Z`).getTime()),
     timestamp: new Date(`${day}T00:00:00.000Z`).getTime(),
     responseTimeMs: totals.avg_response_time_ms,
+    tracked: true,
   }));
+  return fillUntrackedGaps(points, DAY_MS, dayLabel);
 }

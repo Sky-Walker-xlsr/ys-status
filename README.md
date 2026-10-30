@@ -2,6 +2,15 @@
 
 Eigene Status-Page-Applikation (angelehnt an [gatus](https://github.com/TwiN/gatus)), gebaut mit Next.js, Supabase und Cloudflare Workers. Rein lesend, kein Login, keine Admin-UI — Endpoints werden per SQL gepflegt.
 
+**In Betrieb seit 24.09.2026** (erste Checks in Supabase: 24.09.2026, 14:45 Uhr).
+
+### Letzte Anpassungen (05.10.2026)
+
+- **Checks aus Europa:** Der Checker läuft jetzt in einem Durable Object mit `locationHint: "weur"`. Vorher liefen die Cron-Runs oft in Singapur/USA — dort wurden Next.js-Zielseiten auf dem Workers-Free-Plan (z.B. xavistylist.ch) mit `exceededCpu` → HTTP 503 abgebrochen, obwohl die Seite für Besucher lief.
+- **Ruhezeiten fürs Homelab:** Endpoints können ein tägliches Zeitfenster haben (`quiet_start`/`quiet_end`, Schweizer Zeit), in dem nicht geprüft wird. Die Homelab-Dienste sind 00:00–06:10 pausiert (Homelab ist nachts aus). Das Dashboard zeigt dann „Paused“.
+- **Lücken grau:** Zeiträume ohne Checks (Ruhezeit, verpasste Runs) erscheinen in den Balken und im Response-Time-Trend grau, statt dass die Daten einfach zusammengeschoben werden.
+- **Historie bereinigt:** Fehlalarme von Xavi Stylist/Admin (503), Homepage (404 nach dem Go-live der neuen Seite, Check-URL jetzt `https://yannicksalm.ch/`) und die nächtlichen 530er der Homelab-Dienste wurden entfernt. Gruppe „Infrastrucktur“ → „Infrastruktur“.
+
 ## Stack
 
 - Next.js (App Router, TypeScript), Deployment via `@opennextjs/cloudflare`
@@ -26,8 +35,11 @@ npm run dev                  # http://localhost:3000
    - [`002_hide_url.sql`](supabase/002_hide_url.sql) — fügt `endpoints.hide_url` hinzu (siehe unten).
    - [`003_endpoints_public_view.sql`](supabase/003_endpoints_public_view.sql) — maskiert `url` für versteckte Endpoints auch auf DB-Ebene (siehe unten).
    - [`004_gatus_style_checker.sql`](supabase/004_gatus_style_checker.sql) — Health-State pro Endpoint, Failure/Success-Thresholds und Rollups als Postgres-Funktionen (für den `checker/`-Worker).
+   - [`005_quiet_hours.sql`](supabase/005_quiet_hours.sql) — Ruhezeiten pro Endpoint (View `endpoints_due` für den Checker) + Bereinigung Xavi Stylist/Admin.
+   - [`006_homepage_url.sql`](supabase/006_homepage_url.sql) — Homepage-Check-URL auf `/`, 404-Fehlalarme auf OK gesetzt.
+   - [`007_homelab_quiet_history.sql`](supabase/007_homelab_quiet_history.sql) — nächtliche Homelab-Ausfälle aus der Historie entfernt (läuft nur einmal), Gruppenname korrigiert.
 
-Es gibt keinen Migration-Runner — weitere Migrationen als `004_*.sql` etc. in `supabase/` ablegen und manuell ausführen.
+Es gibt keinen Migration-Runner — weitere Migrationen als `008_*.sql` etc. in `supabase/` ablegen und manuell ausführen.
 
 ### Domain eines Endpoints verstecken
 
@@ -68,11 +80,11 @@ Damit umgeht nur der Checker (mit dem korrekten Secret) den Bot-Schutz — für 
 Zwei getrennte Worker:
 
 - **`ys-status`** (`worker.ts`, `wrangler.jsonc`) — nur das Next.js-Dashboard, keine Crons.
-- **`ys-status-checker`** (`checker/index.ts`, `checker/wrangler.jsonc`) — die Health-Checks, bewusst winzig (kein Next.js, kein supabase-js, nur `fetch`). Hintergrund: Cron-Aufrufe haben im Workers-Free-Plan 10 ms CPU. Der alte Checker lief im Next.js-Worker und wurde ständig mit `exceededCpu` abgebrochen → ganze Check-Runs fehlten.
+- **`ys-status-checker`** (`checker/index.ts`, `checker/wrangler.jsonc`) — die Health-Checks, bewusst winzig (kein Next.js, kein supabase-js, nur `fetch`). Hintergrund: Cron-Aufrufe haben im Workers-Free-Plan 10 ms CPU. Der alte Checker lief im Next.js-Worker und wurde ständig mit `exceededCpu` abgebrochen → ganze Check-Runs fehlten. Der Cron weckt nur das Durable Object `EuChecker` (Westeuropa), das die eigentlichen Checks macht.
 
 Ablauf (angelehnt an gatus):
 
-- **Alle 5 Minuten** (`*/5 * * * *`): GET auf jeden Endpoint (10s Timeout, Redirects folgen, Erfolg = HTTP 2xx). Schlägt ein Check fehl, wird er nach 2s einmal wiederholt. Danach **ein** RPC-Call `record_check_results`, der die Zeile in `checks` schreibt und den Health-State pro Endpoint führt.
+- **Alle 5 Minuten** (`*/5 * * * *`): GET auf jeden Endpoint ausserhalb seiner Ruhezeit (View `endpoints_due`) (10s Timeout, Redirects folgen, Erfolg = HTTP 2xx). Schlägt ein Check fehl, wird er nach 2s einmal wiederholt. Danach **ein** RPC-Call `record_check_results`, der die Zeile in `checks` schreibt und den Health-State pro Endpoint führt.
 - **Thresholds**: ein Endpoint wird erst nach **2 fehlgeschlagenen Checks in Folge** `unhealthy` (Event-Zeitpunkt = erster Fehlschlag) und nach **1 erfolgreichen Check** wieder `healthy`. Konstanten `FAILURE_THRESHOLD` / `SUCCESS_THRESHOLD` in `checker/index.ts`.
 - **Zur vollen Stunde** (im selben `*/5`-Run): `rollup_hourly()` aggregiert die letzte volle Stunde in `hourly_stats`, löscht `checks` älter als 24h.
 - **Täglich um 00:05 UTC** (im selben `*/5`-Run): `rollup_daily()` aggregiert den Vortag in `daily_stats`, löscht `hourly_stats` älter als 7 Tage.

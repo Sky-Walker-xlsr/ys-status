@@ -4,7 +4,7 @@ import Link from "next/link";
 import type { Check, Endpoint } from "@/lib/types";
 import StatusBadge from "./StatusBadge";
 import ChecksBarChart from "./ChecksBarChart";
-import { hostOf, formatMs } from "@/lib/format";
+import { hostOf, formatMs, formatQuietWindow } from "@/lib/format";
 
 interface EndpointCardProps {
   endpoint: Endpoint;
@@ -48,13 +48,18 @@ export default function EndpointCard({ endpoint, checks }: EndpointCardProps) {
           </div>
         </div>
         <div className="flex flex-col items-end gap-1">
-          <StatusBadge healthy={healthy} />
+          <StatusBadge healthy={healthy} paused={endpoint.in_quiet_hours} />
           <span className="text-xs" style={{ color: "var(--color-text-secondary)" }}>
             ~{formatMs(latest?.response_time_ms)}
           </span>
         </div>
       </div>
-      <ChecksBarChart checks={checks} maxBars={30} />
+      {endpoint.in_quiet_hours && (
+        <p className="text-xs" style={{ color: "var(--color-text-secondary)" }}>
+          Homelab offline {formatQuietWindow(endpoint.quiet_start, endpoint.quiet_end)} — checks paused
+        </p>
+      )}
+      <ChecksBarChart checks={checks} maxBars={30} untilNow />
     </Link>
   );
 }

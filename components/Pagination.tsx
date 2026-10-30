@@ -14,7 +14,7 @@ export default function Pagination({ page, totalPages, onPageChange }: Paginatio
         className="rounded-[var(--radius-main)] px-3 py-1.5 text-sm disabled:opacity-40"
         style={{ background: "var(--color-card)", border: "1px solid var(--color-border)", color: "var(--color-text)" }}
       >
-        Previous
+        Next
       </button>
       <span className="text-sm" style={{ color: "var(--color-text-secondary)" }}>
         Page {page} of {Math.max(totalPages, 1)}
@@ -26,7 +26,7 @@ export default function Pagination({ page, totalPages, onPageChange }: Paginatio
         className="rounded-[var(--radius-main)] px-3 py-1.5 text-sm disabled:opacity-40"
         style={{ background: "var(--color-card)", border: "1px solid var(--color-border)", color: "var(--color-text)" }}
       >
-        Next
+        Previous
       </button>
     </div>
   );
